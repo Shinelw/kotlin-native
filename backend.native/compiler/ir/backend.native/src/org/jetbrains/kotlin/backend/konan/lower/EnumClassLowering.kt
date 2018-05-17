@@ -52,23 +52,25 @@ import org.jetbrains.kotlin.types.TypeSubstitutor
 import org.jetbrains.kotlin.types.Variance
 
 
-private fun assignOrdinalsToEnumEntries(irClass: IrClass): Map<ClassDescriptor, Int> {
-    val enumEntryOrdinals = mutableMapOf<ClassDescriptor, Int>()
-    var ordinal = 0
-    irClass.declarations.forEach {
-        if (it is IrEnumEntry) {
-            enumEntryOrdinals[it.descriptor] = ordinal
-            ordinal++
+
+
+private val enumEntryEnumerator = object {
+    private val ordinals = mutableMapOf<IrClass, Map<ClassDescriptor, Int>>()
+
+    private fun assignOrdinalsToEnumEntries(irClass: IrClass): Map<ClassDescriptor, Int> {
+        val enumEntryOrdinals = mutableMapOf<ClassDescriptor, Int>()
+        irClass.declarations.filterIsInstance<IrEnumEntry>().forEachIndexed { index, entry ->
+            // TODO: remove
+            println("${entry.name} got ordinal = $index")
+            enumEntryOrdinals[entry.descriptor] = index
         }
+        return enumEntryOrdinals
     }
-    return enumEntryOrdinals
-}
 
-private val ordinals = mutableMapOf<IrClass, Map<ClassDescriptor, Int>>()
-
-private fun getEnumEntryOrdinal(context: Context, entryDescriptor: ClassDescriptor): Int {
-    val enumClass = context.ir.getEnum(entryDescriptor.containingDeclaration as ClassDescriptor)
-    return ordinals.getOrPut(enumClass) { assignOrdinalsToEnumEntries(enumClass) }[entryDescriptor]!!
+    fun getOrdinal(context: Context, entryDescriptor: ClassDescriptor): Int {
+        val enumClass = context.ir.getEnum(entryDescriptor.containingDeclaration as ClassDescriptor)
+        return ordinals.getOrPut(enumClass) { assignOrdinalsToEnumEntries(enumClass) }[entryDescriptor]!!
+    }
 }
 
 
@@ -209,7 +211,7 @@ internal class EnumWhenLowering(
             val eqEqCall = it.condition as IrCall
             val entry = eqEqCall.getArguments()[1].second as? IrGetEnumValue
             if (entry != null) {
-                val entryOrdinal = getEnumEntryOrdinal(context, entry.descriptor)
+                val entryOrdinal = enumEntryEnumerator.getOrdinal(context, entry.descriptor)
                 // replace condition with trivial comparison of ordinals
                 it.condition = IrCallImpl(eqEqCall.startOffset, eqEqCall.endOffset, areEqualByValue).apply {
                     putValueArgument(0, IrConstImpl.int(entry.startOffset, entry.endOffset, context.builtIns.intType, entryOrdinal))
@@ -238,8 +240,7 @@ internal class EnumWhenLowering(
 
     private fun createOrdinalVariable(irBlock: IrBlock): IrVariable {
         val tempVariable = irBlock.statements[0] as IrVariable
-        val enumClass = tempVariable.type.constructor.declarationDescriptor as ClassDescriptor
-        val ordinalPropertyGetter = context.ir.getPropertyGetterByName(enumClass, Name.identifier("ordinal"))
+        val ordinalPropertyGetter = context.ir.symbols.enum.getPropertyGetter("ordinal")!!
         val getOrdinal = IrCallImpl(tempVariable.startOffset, tempVariable.endOffset, ordinalPropertyGetter).apply {
             dispatchReceiver = IrGetValueImpl(tempVariable.startOffset, tempVariable.endOffset, tempVariable.symbol)
         }
@@ -648,7 +649,7 @@ internal class EnumClassLowering(val context: Context) : ClassLoweringPass {
         private abstract inner class InEnumEntry(private val enumEntry: ClassDescriptor) : EnumConstructorCallTransformer {
             override fun transform(enumConstructorCall: IrEnumConstructorCall): IrExpression {
                 val name = enumEntry.name.asString()
-                val ordinal = getEnumEntryOrdinal(context, enumEntry)
+                val ordinal = enumEntryEnumerator.getOrdinal(context, enumEntry)
 
                 val descriptor = enumConstructorCall.descriptor
                 val startOffset = enumConstructorCall.startOffset
