@@ -60,8 +60,6 @@ private val enumEntryEnumerator = object {
     private fun assignOrdinalsToEnumEntries(irClass: IrClass): Map<ClassDescriptor, Int> {
         val enumEntryOrdinals = mutableMapOf<ClassDescriptor, Int>()
         irClass.declarations.filterIsInstance<IrEnumEntry>().forEachIndexed { index, entry ->
-            // TODO: remove
-            println("${entry.name} got ordinal = $index")
             enumEntryOrdinals[entry.descriptor] = index
         }
         return enumEntryOrdinals
