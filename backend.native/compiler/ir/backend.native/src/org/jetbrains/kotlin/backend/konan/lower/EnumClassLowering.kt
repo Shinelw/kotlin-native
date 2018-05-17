@@ -51,6 +51,27 @@ import org.jetbrains.kotlin.types.TypeProjectionImpl
 import org.jetbrains.kotlin.types.TypeSubstitutor
 import org.jetbrains.kotlin.types.Variance
 
+
+private fun assignOrdinalsToEnumEntries(irClass: IrClass): Map<ClassDescriptor, Int> {
+    val enumEntryOrdinals = mutableMapOf<ClassDescriptor, Int>()
+    var ordinal = 0
+    irClass.declarations.forEach {
+        if (it is IrEnumEntry) {
+            enumEntryOrdinals[it.descriptor] = ordinal
+            ordinal++
+        }
+    }
+    return enumEntryOrdinals
+}
+
+private val ordinals = mutableMapOf<IrClass, Map<ClassDescriptor, Int>>()
+
+private fun getEnumEntryOrdinal(context: Context, entryDescriptor: ClassDescriptor): Int {
+    val enumClass = context.ir.getEnum(entryDescriptor.containingDeclaration as ClassDescriptor)
+    return ordinals.getOrPut(enumClass) { assignOrdinalsToEnumEntries(enumClass) }[entryDescriptor]!!
+}
+
+
 internal class EnumSyntheticFunctionsBuilder(val context: Context) {
     fun buildValuesExpression(startOffset: Int, endOffset: Int,
                               enumClassDescriptor: ClassDescriptor): IrExpression {
@@ -162,8 +183,7 @@ internal class EnumUsageLowering(val context: Context)
 // Replace branches that are comparisons with compile-time known enum entries
 // with comparisons of ordinals.
 internal class EnumWhenLowering(
-        private val context: Context,
-        private val enumEntryOrdinals: Map<ClassDescriptor, Int>)
+        private val context: Context)
     : IrElementTransformerVoid(), FileLoweringPass {
 
     override fun lower(irFile: IrFile) {
@@ -189,7 +209,7 @@ internal class EnumWhenLowering(
             val eqEqCall = it.condition as IrCall
             val entry = eqEqCall.getArguments()[1].second as? IrGetEnumValue
             if (entry != null) {
-                val entryOrdinal = enumEntryOrdinals[entry.descriptor]!!
+                val entryOrdinal = getEnumEntryOrdinal(context, entry.descriptor)
                 // replace condition with trivial comparison of ordinals
                 it.condition = IrCallImpl(eqEqCall.startOffset, eqEqCall.endOffset, areEqualByValue).apply {
                     putValueArgument(0, IrConstImpl.int(entry.startOffset, entry.endOffset, context.builtIns.intType, entryOrdinal))
@@ -231,15 +251,13 @@ internal class EnumWhenLowering(
     }
 }
 
-
 internal class EnumClassLowering(val context: Context) : ClassLoweringPass {
-    private val enumEntryOrdinals = mutableMapOf<ClassDescriptor, Int>()
 
     fun run(irFile: IrFile) {
         runOnFilePostfix(irFile)
         // EnumWhenLowering should be performed before EnumUsageLowering because
         // the latter is performing lowering of IrGetEnumValue
-        EnumWhenLowering(context, enumEntryOrdinals).lower(irFile)
+        EnumWhenLowering(context).lower(irFile)
         EnumUsageLowering(context).lower(irFile)
     }
 
@@ -264,7 +282,6 @@ internal class EnumClassLowering(val context: Context) : ClassLoweringPass {
 
         fun run() {
             insertInstanceInitializerCall()
-            assignOrdinalsToEnumEntries()
             lowerEnumConstructors(irClass)
             lowerEnumEntriesClasses()
             val defaultClass = createDefaultClassForEnumEntries()
@@ -297,16 +314,6 @@ internal class EnumClassLowering(val context: Context) : ClassLoweringPass {
                     return declaration
                 }
             })
-        }
-
-        private fun assignOrdinalsToEnumEntries() {
-            var ordinal = 0
-            irClass.declarations.forEach {
-                if (it is IrEnumEntry) {
-                    enumEntryOrdinals.put(it.descriptor, ordinal)
-                    ordinal++
-                }
-            }
         }
 
         private fun lowerEnumEntriesClasses() {
@@ -641,7 +648,7 @@ internal class EnumClassLowering(val context: Context) : ClassLoweringPass {
         private abstract inner class InEnumEntry(private val enumEntry: ClassDescriptor) : EnumConstructorCallTransformer {
             override fun transform(enumConstructorCall: IrEnumConstructorCall): IrExpression {
                 val name = enumEntry.name.asString()
-                val ordinal = enumEntryOrdinals[enumEntry]!!
+                val ordinal = getEnumEntryOrdinal(context, enumEntry)
 
                 val descriptor = enumConstructorCall.descriptor
                 val startOffset = enumConstructorCall.startOffset

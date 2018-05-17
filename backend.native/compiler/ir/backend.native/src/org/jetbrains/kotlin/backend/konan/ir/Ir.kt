@@ -94,6 +94,8 @@ internal class KonanIr(context: Context, irModule: IrModuleFragment): Ir<Context
         val property = descriptor.unsubstitutedMemberScope
                 .getContributedVariables(name, NoLookupLocation.FROM_BACKEND)
                 .single()
+        println("!!! After val property = ...")
+        context.printIr()
         return context.ir.symbols.symbolTable.referenceSimpleFunction(property.getter!!)
     }
 }
