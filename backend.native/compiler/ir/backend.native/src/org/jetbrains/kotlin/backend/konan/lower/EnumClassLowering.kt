@@ -264,7 +264,7 @@ internal class EnumClassLowering(val context: Context) : ClassLoweringPass {
     fun run(irFile: IrFile) {
         runOnFilePostfix(irFile)
         // EnumWhenLowering should be performed before EnumUsageLowering because
-        // the latter is performing lowering of IrGetEnumValue
+        // the latter performs lowering of IrGetEnumValue
         EnumWhenLowering(context).lower(irFile)
         EnumUsageLowering(context).lower(irFile)
     }
